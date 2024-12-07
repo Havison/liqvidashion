@@ -1,19 +1,17 @@
-import tracemalloc
-
-import websocket
+import asyncio
 import json
 import ssl
+import websockets
 from pybit.unified_trading import HTTP
 from config_data.config import Config, load_config
 from user import message_bybit_binance
 
-tracemalloc.start()
 config: Config = load_config('.env')
 session = HTTP(
-        testnet=False,
-        api_key=config.by_bit.api_key,
-        api_secret=config.by_bit.api_secret,
-    )
+    testnet=False,
+    api_key=config.by_bit.api_key,
+    api_secret=config.by_bit.api_secret,
+)
 
 data_bybit = session.get_tickers(category="linear")
 
@@ -28,10 +26,10 @@ TOP_50_COINS = [
     "1INCHUSDT", "IMXUSDT", "GALAUSDT", "CRVUSDT", "DYDXUSDT", "SUSHIUSDT"
 ]
 s = [dicts['symbol'] for dicts in data_bybit['result']['list']
-          if 'USDT' in dicts['symbol'] and dicts['symbol'] not in TOP_50_COINS]
+     if 'USDT' in dicts['symbol'] and dicts['symbol'] not in TOP_50_COINS]
 
 
-def on_message(ws, message):
+async def on_message(ws, message):
     data = json.loads(message)
     if "data" in data and data["topic"].startswith("liquidation."):
         liquidation = data["data"]
@@ -42,28 +40,28 @@ def on_message(ws, message):
         notional = qty * price  # Сумма ликвидации в USDT
         if notional >= 15000:
             liquidation_type = "Short" if side == "Buy" else "Long"
-            message_bybit_binance(-1002304776308, symbol, liquidation_type, f'{notional:.2f}')
-            # print(f"Монета: {symbol}, Тип ликвидации: {liquidation_type}, Сумма: {notional:.2f} USDT")
+            await message_bybit_binance(-1002304776308, symbol, liquidation_type, f'{notional:.2f}')
 
 
 # Обработка ошибок
-def on_error(ws, error):
+async def on_error(ws, error):
     print(f"Ошибка: {error}")
 
 
 # Закрытие соединения
-def on_close(ws, close_status_code, close_msg):
+async def on_close(ws, close_status_code, close_msg):
     print(f"Соединение закрыто. Код: {close_status_code}, Сообщение: {close_msg}")
 
 
 # Открытие соединения
-def on_open(ws):
+async def on_open(ws):
     # Группируем тикеры для подписки
     params = {
         "op": "subscribe",
         "args": [f"liquidation.{symbol}" for symbol in s]  # Создаём массив тикеров
     }
-    ws.send(json.dumps(params))
+    await ws.send(json.dumps(params))
+
 
 # URL для подключения к публичному WebSocket
 url = "wss://stream.bybit.com/v5/public/linear"  # Исправленный URL для деривативов
@@ -73,12 +71,16 @@ ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
-# Подключение к WebSocket
-ws = websocket.WebSocketApp(
-    url,
-    on_message=on_message,
-    on_error=on_error,
-    on_close=on_close
-)
-ws.on_open = on_open
-ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+
+async def main():
+    async with websockets.connect(url, ssl=ssl_context) as ws:
+        await on_open(ws)
+
+        while True:
+            message = await ws.recv()
+            await on_message(ws, message)
+
+
+# Запуск асинхронной функции
+if __name__ == "__main__":
+    asyncio.run(main())
