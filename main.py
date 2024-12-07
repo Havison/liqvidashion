@@ -1,10 +1,19 @@
 import asyncio
 import json
 import ssl
+import logging
 import websockets
 from pybit.unified_trading import HTTP
 from config_data.config import Config, load_config
 from user import message_bybit_binance
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
+handler = logging.FileHandler("main.log")
+formatter = logging.Formatter("%(filename)s:%(lineno)d #%(levelname)-8s [%(asctime)s] - %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 config: Config = load_config('.env')
 session = HTTP(
@@ -30,57 +39,62 @@ s = [dicts['symbol'] for dicts in data_bybit['result']['list']
 
 
 async def on_message(ws, message):
-    data = json.loads(message)
-    if "data" in data and data["topic"].startswith("liquidation."):
-        liquidation = data["data"]
-        symbol = liquidation["symbol"]
-        side = liquidation["side"]  # Тип ликвидации: "Buy" или "Sell"
-        qty = float(liquidation["size"])  # Количество монет
-        price = float(liquidation["price"])  # Цена ликвидации
-        notional = qty * price  # Сумма ликвидации в USDT
-        if notional >= 15000:
-            liquidation_type = "Short" if side == "Buy" else "Long"
-            await message_bybit_binance(-1002304776308, symbol, liquidation_type, f'{notional:.2f}')
+    try:
+        data = json.loads(message)
+        if "data" in data and data["topic"].startswith("liquidation."):
+            liquidation = data["data"]
+            symbol = liquidation["symbol"]
+            side = liquidation["side"]
+            qty = float(liquidation["size"])
+            price = float(liquidation["price"])
+            notional = qty * price
+
+            if notional >= 15000:
+                liquidation_type = "Short" if side == "Buy" else "Long"
+                await message_bybit_binance(-1002304776308, symbol, liquidation_type, f'{notional:.2f}')
+                logger.info(f"Обработано событие ликвидации: {symbol}, Тип: {liquidation_type}, Сумма: {notional:.2f} USDT")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке сообщения WebSocket: {e}")
 
 
-# Обработка ошибок
 async def on_error(ws, error):
-    print(f"Ошибка: {error}")
+    logger.error(f"Ошибка WebSocket: {error}")
 
 
-# Закрытие соединения
 async def on_close(ws, close_status_code, close_msg):
-    print(f"Соединение закрыто. Код: {close_status_code}, Сообщение: {close_msg}")
+    logger.warning(f"Соединение закрыто. Код: {close_status_code}, Сообщение: {close_msg}")
 
 
-# Открытие соединения
 async def on_open(ws):
-    # Группируем тикеры для подписки
-    params = {
-        "op": "subscribe",
-        "args": [f"liquidation.{symbol}" for symbol in s]  # Создаём массив тикеров
-    }
-    await ws.send(json.dumps(params))
+    try:
+        params = {
+            "op": "subscribe",
+            "args": [f"liquidation.{symbol}" for symbol in s]
+        }
+        await ws.send(json.dumps(params))
+        logger.info("Подписка на ликвидации отправлена.")
+    except Exception as e:
+        logger.error(f"Ошибка при подписке на ликвидации: {e}")
 
 
-# URL для подключения к публичному WebSocket
-url = "wss://stream.bybit.com/v5/public/linear"  # Исправленный URL для деривативов
-
-# Игнорирование проверки SSL-сертификатов
+url = "wss://stream.bybit.com/v5/public/linear"
 ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
 
 async def main():
-    async with websockets.connect(url, ssl=ssl_context) as ws:
-        await on_open(ws)
+    try:
+        async with websockets.connect(url, ssl=ssl_context) as ws:
+            logger.info("Соединение с WebSocket открыто.")
+            await on_open(ws)
 
-        while True:
-            message = await ws.recv()
-            await on_message(ws, message)
+            while True:
+                message = await ws.recv()
+                await on_message(ws, message)
+    except Exception as e:
+        logger.critical(f"Критическая ошибка в основном цикле: {e}")
 
 
-# Запуск асинхронной функции
 if __name__ == "__main__":
     asyncio.run(main())
