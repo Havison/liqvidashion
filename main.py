@@ -42,7 +42,7 @@ def on_message(ws, message):
         notional = qty * price  # Сумма ликвидации в USDT
         if notional >= 15000:
             liquidation_type = "Short" if side == "Buy" else "Long"
-            message_bybit_binance(573167949, symbol, liquidation_type, f'{notional:.2f}')
+            message_bybit_binance(-1002304776308, symbol, liquidation_type, f'{notional:.2f}')
             # print(f"Монета: {symbol}, Тип ликвидации: {liquidation_type}, Сумма: {notional:.2f} USDT")
 
 
