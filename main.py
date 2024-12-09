@@ -2,12 +2,11 @@ import asyncio
 import json
 import ssl
 import logging
-
-import requests
 import websockets
 from pybit.unified_trading import HTTP
 from config_data.config import Config, load_config
 from user import message_bybit_binance, message_binance
+import httpx
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -24,16 +23,54 @@ session = HTTP(
     api_secret=config.by_bit.api_secret,
 )
 
-data_bybit = session.get_tickers(category="linear")
+binance_symbol = []  # Список всех фьючерсных пар Binance с USDT
+TOP_50_BYBIT = []  # Топ-50 пар Bybit по объему
 
-TOP_50_COINS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'DOGEUSDT', 'XRPUSDT', 'DOTUSDT', 'SOLUSDT', 'LINKUSDT', 'LTCUSDT', 'BCHUSDT', 'UNIUSDT', 'XLMUSDT', 'FILUSDT', 'THETAUSDT', 'VETUSDT', 'TRXUSDT', 'EOSUSDT', 'AAVEUSDT', 'XMRUSDT', 'ATOMUSDT', 'ALGOUSDT', 'CROUSDT', 'MKRUSDT', 'ETCUSDT', 'NEOUSDT', 'CAKEUSDT', 'COMPUSDT', 'MIOTAUSDT', 'DASHUSDT', 'KSMUSDT', 'ZECUSDT', 'XEMUSDT', 'XTZUSDT', 'BSVUSDT', 'AXSUSDT', 'WAVESUSDT', 'SUSHIUSDT', 'EGLDUSDT', 'MANAUSDT', 'HNTUSDT', 'HEDGUSDT', 'SHIBUSDT', 'CELUSDT', 'HTUSDT', 'ENJUSDT', 'GRTUSDT', 'ZRXUSDT', 'RENUSDT', 'BATUSDT']
-s = [dicts['symbol'] for dicts in data_bybit['result']['list']
-     if 'USDT' in dicts['symbol'] and dicts['symbol'] not in TOP_50_COINS]
 
-url = 'https://fapi.binance.com/fapi/v2/ticker/price'
-response = requests.get(url)
-data_binance = response.json()
-binance_symbol = [data['symbol'] for data in data_binance if 'USDT' in data['symbol']]
+# Функция для получения всех фьючерсных пар Binance с USDT
+async def fetch_binance_futures_symbols():
+    try:
+        logger.info("Запрос всех фьючерсных пар Binance с USDT...")
+        url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            data = response.json()
+            global binance_symbol
+            binance_symbol = [
+                symbol["symbol"] for symbol in data["symbols"] if symbol["quoteAsset"] == "USDT"
+            ]
+            logger.info(f"Обновлен список фьючерсных пар Binance: {binance_symbol}")
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении списка фьючерсных пар Binance: {e}")
+
+
+# Функция для получения топ-50 торговых пар Bybit
+async def fetch_top_50_bybit():
+    try:
+        logger.info("Запрос топ-50 торговых пар с Bybit...")
+        data_bybit = session.get_tickers(category="linear")
+        usdt_pairs = [
+            {
+                "symbol": ticker["symbol"],
+                "volume_24h": float(ticker["turnover24h"])  # Оборот за 24 часа
+            }
+            for ticker in data_bybit["result"]["list"]
+            if "USDT" in ticker["symbol"]
+        ]
+        sorted_pairs = sorted(usdt_pairs, key=lambda x: x["volume_24h"], reverse=True)
+        global TOP_50_BYBIT
+        TOP_50_BYBIT = [pair["symbol"] for pair in sorted_pairs[:50]]
+        logger.info(f"Обновлен топ-50 Bybit: {TOP_50_BYBIT}")
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении топ-50 Bybit: {e}")
+
+
+# Фоновая задача для обновления топ-50 Bybit и списка пар Binance каждые 24 часа
+async def update_symbols():
+    while True:
+        await fetch_top_50_bybit()
+        await fetch_binance_futures_symbols()
+        await asyncio.sleep(24 * 60 * 60)  # Обновление каждые 24 часа
 
 
 async def on_message(ws, message):
@@ -68,9 +105,10 @@ async def on_close(ws, close_status_code, close_msg):
 
 async def on_open(ws):
     try:
+        await fetch_top_50_bybit()  # Запросить топ-50 перед подпиской
         params = {
             "op": "subscribe",
-            "args": [f"liquidation.{symbol}" for symbol in s]
+            "args": [f"liquidation.{symbol}" for symbol in TOP_50_BYBIT]
         }
         await ws.send(json.dumps(params))
         logger.info("Подписка на ликвидации отправлена.")
@@ -86,6 +124,10 @@ ssl_context.verify_mode = ssl.CERT_NONE
 
 async def main():
     try:
+        # Запуск фонового обновления символов
+        asyncio.create_task(update_symbols())
+
+        # Подключение к WebSocket
         async with websockets.connect(url, ssl=ssl_context) as ws:
             logger.info("Соединение с WebSocket открыто.")
             await on_open(ws)
