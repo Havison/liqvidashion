@@ -84,7 +84,7 @@ async def on_message(ws, message):
             price = float(liquidation["price"])
             notional = qty * price
 
-            if notional >= 15000:
+            if notional >= 15000 and symbol in TOP_50_BYBIT:
                 liquidation_type = "Long" if side == "Buy" else "Short"
                 if symbol in binance_symbol:
                     await message_bybit_binance(-1002304776308, symbol, liquidation_type, f'{notional:.2f}', price)
