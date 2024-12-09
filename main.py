@@ -59,8 +59,10 @@ async def fetch_top_50_bybit():
         ]
         sorted_pairs = sorted(usdt_pairs, key=lambda x: x["volume_24h"], reverse=True)
         global TOP_50_BYBIT
+        symbol_all = [pair["symbol"] for pair in usdt_pairs]
         TOP_50_BYBIT = [pair["symbol"] for pair in sorted_pairs[:50]]
         logger.info(f"Обновлен топ-50 Bybit: {TOP_50_BYBIT}")
+        return symbol_all
     except Exception as e:
         logger.error(f"Ошибка при обновлении топ-50 Bybit: {e}")
 
@@ -105,10 +107,10 @@ async def on_close(ws, close_status_code, close_msg):
 
 async def on_open(ws):
     try:
-        await fetch_top_50_bybit()  # Запросить топ-50 перед подпиской
+        symbol_all = await fetch_top_50_bybit()  # Запросить топ-50 перед подпиской
         params = {
             "op": "subscribe",
-            "args": [f"liquidation.{symbol}" for symbol in TOP_50_BYBIT]
+            "args": [f"liquidation.{symbol}" for symbol in symbol_all]
         }
         await ws.send(json.dumps(params))
         logger.info("Подписка на ликвидации отправлена.")
