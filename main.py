@@ -59,7 +59,7 @@ async def fetch_top_50_bybit():
         ]
         sorted_pairs = sorted(usdt_pairs, key=lambda x: x["volume_24h"], reverse=True)
         global TOP_50_BYBIT
-        symbol_all = [pair["symbol"] for pair in usdt_pairs]
+        symbol_all = [pair["symbol"] for pair in sorted_pairs[50:]]
         TOP_50_BYBIT = [pair["symbol"] for pair in sorted_pairs[:50]]
         logger.info(f"Обновлен топ-50 Bybit: {TOP_50_BYBIT}")
         return symbol_all
